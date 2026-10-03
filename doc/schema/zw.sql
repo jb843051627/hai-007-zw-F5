@@ -302,3 +302,293 @@ VALUES (2, 'ZS02', '青坪市青西水源地（在用·有在办处置单）', '
 INSERT IGNORE INTO t_zw_case_flow (id, biz_no, site_no, stage, status, content, last_action, del_flag, create_by, create_time)
 VALUES (9101, 'CF-202609-01', 'ZS02', 1, 1, '余氯异常处置中', '初检', 0, 'seed', NOW());
 
+
+-- ============================================================================
+-- 水质异常判定留痕（hai-007 第二期）：
+-- 判定一出来自动登记 → 上报前可订正一次 → 上报（同点位同日同指标唯一一单，
+-- 报后只读、不可撤、不可改名）→ 复测单按环节开权限、逐步复录上一步 → 末环通过系统归档；
+-- 上报同时系统自开供水户盯办单，盯办按另算的周期自开自结，只追加、不倒改。
+-- ============================================================================
+
+-- 供水户联系名录：异常上报反映到供水户名下、盯办该找谁，都只从这张名录现取（只读底档，页面不另请人手填）。
+CREATE TABLE IF NOT EXISTS t_zw_water_user (
+  id bigint NOT NULL COMMENT '主键',
+  site_no varchar(64) NOT NULL COMMENT '所属点位代号（只认代号不认名字）',
+  user_name varchar(128) DEFAULT NULL COMMENT '供水户名称',
+  contact_name varchar(64) DEFAULT NULL COMMENT '联系人（盯办单开单时照此快照）',
+  contact_phone varchar(32) DEFAULT NULL COMMENT '联系电话',
+  status int DEFAULT '0' COMMENT '名录情形 0现行 1停用',
+  del_flag int DEFAULT '0' COMMENT '删除标记 0正常 1删除',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  update_by varchar(64) DEFAULT NULL COMMENT '更新者',
+  update_time datetime DEFAULT NULL COMMENT '更新时间',
+  remark varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (id),
+  KEY idx_zw_water_user_site (site_no, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='供水户联系名录（盯办取人唯一出处）';
+
+-- 异常判定登记台账：异常一判出来（导入定级为关注/超标/严重超标）系统自动落一条，页面没有新增口。
+-- 判定三件套（档位/标准线代号/标准生效日）、检测值与对照界值、超量、停水复测建议登记即钉死；
+-- 上报前只准订正一次判定结论（档位/建议/说明），点位/哪天的水/指标/检测值/标准快照一根不能动。
+-- uk(site_no,test_date,item_code)：同点位同一天同一指标只成立一单，第二单整单不成立。
+CREATE TABLE IF NOT EXISTS t_zw_abn_case (
+  id bigint NOT NULL COMMENT '主键',
+  case_no varchar(64) NOT NULL COMMENT '异常登记单号（系统一次生成，全表唯一）',
+  imp_row_id bigint DEFAULT NULL COMMENT '原始检测记录行（t_zw_imp_row.id，点回去看当日原记录）',
+  batch_no varchar(64) DEFAULT NULL COMMENT '原始检测批次号（随登记钉死）',
+  row_no int DEFAULT NULL COMMENT '原始行次',
+  site_no varchar(64) DEFAULT NULL COMMENT '哪个点位（代号）',
+  item_code varchar(64) DEFAULT NULL COMMENT '哪个指标',
+  sample_type varchar(32) DEFAULT NULL COMMENT '样本类别(水源水/出厂水/管网末梢)',
+  test_at datetime DEFAULT NULL COMMENT '哪天的水（检测发生时刻）',
+  test_date datetime DEFAULT NULL COMMENT '检测当日零点（业务时区，唯一键按天归堆）',
+  qty decimal(12,2) DEFAULT NULL COMMENT '当天检测值',
+  grade_level int DEFAULT NULL COMMENT '判定档位 2关注 3超标 4严重超标（可订正一次）',
+  limit_value decimal(12,2) DEFAULT NULL COMMENT '判定时对照的那条界值（钉死）',
+  over_qty decimal(12,2) DEFAULT NULL COMMENT '超了多少（检测值减对照界值，登记时算死）',
+  rule_code varchar(64) DEFAULT NULL COMMENT '哪条标准线（代号，钉死）',
+  rule_name varchar(128) DEFAULT NULL COMMENT '标准线名（登记时快照，让位也能照名翻）',
+  rule_eff_date datetime DEFAULT NULL COMMENT '当天生效的标准是哪张（生效日，钉死）',
+  need_water_stop int DEFAULT '0' COMMENT '要不要停水 0不要 1要（按档位默认，可订正一次）',
+  need_retest int DEFAULT '0' COMMENT '要不要复测 0不要 1要（按档位默认，可订正一次）',
+  verdict_note varchar(500) DEFAULT NULL COMMENT '判定说明（订正即在此留话）',
+  revise_no int DEFAULT '0' COMMENT '订正轮次（0未订正；只准订正一次，1 后写口全闭）',
+  status int DEFAULT '0' COMMENT '台账情形 0已登记(未上报,可订正) 1已上报(只读,已反映到供水户) 2已归档结案',
+  report_by varchar(64) DEFAULT NULL COMMENT '上报人',
+  report_time datetime DEFAULT NULL COMMENT '上报时刻（同一笔异常只准一次）',
+  archive_by varchar(64) DEFAULT NULL COMMENT '归档人（系统归档记 system）',
+  archive_time datetime DEFAULT NULL COMMENT '归档结案时刻',
+  archive_note varchar(500) DEFAULT NULL COMMENT '归档说明',
+  del_flag int DEFAULT '0' COMMENT '删除标记（台账只留不删，任何写口都不置删）',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  update_by varchar(64) DEFAULT NULL COMMENT '更新者',
+  update_time datetime DEFAULT NULL COMMENT '更新时间',
+  remark varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_abn_case_no (case_no),
+  UNIQUE KEY uk_abn_site_day_item (site_no, test_date, item_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='水质异常判定登记台账（自动登记、上报后只读、归档锁死）';
+
+-- 判定全过程流水：只追加。登记/订正/上报/复测开单/归档每一步落一笔，倒查从最后一步排回第一步。
+CREATE TABLE IF NOT EXISTS t_zw_abn_trace (
+  id bigint NOT NULL COMMENT '主键',
+  case_id bigint NOT NULL COMMENT '所属异常登记单',
+  seq int NOT NULL COMMENT '流水次序（从 1 顺排，只追加）',
+  action varchar(24) NOT NULL COMMENT '动作 REGISTER自动登记/CORRECT判定订正/REPORT上报/RETEST_OPEN复测开单/ARCHIVE归档结案',
+  from_status int DEFAULT NULL COMMENT '动作前台账情形',
+  to_status int DEFAULT NULL COMMENT '动作后台账情形',
+  detail varchar(1000) DEFAULT NULL COMMENT '本次写下了什么（订正记前后值；归档记末环结论）',
+  operator varchar(64) NOT NULL COMMENT '经办人（系统自动动作记 system）',
+  action_time datetime NOT NULL COMMENT '动作时刻（系统日志同刻可翻到哪一次写的）',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_abn_trace_seq (case_id, seq),
+  KEY idx_abn_trace_case (case_id, action_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='异常判定过程流水（只追加，倒查准据）';
+
+-- 复测单头：上报成功后系统自动从异常单上开一条（uk 保证一单只开一条，页面无开单口、无撤单口）。
+CREATE TABLE IF NOT EXISTS t_zw_retest_order (
+  id bigint NOT NULL COMMENT '主键',
+  retest_no varchar(64) NOT NULL COMMENT '复测单号（由异常单号带出，全表唯一）',
+  case_id bigint NOT NULL COMMENT '来源异常登记单',
+  case_no varchar(64) DEFAULT NULL COMMENT '来源异常单号',
+  site_no varchar(64) DEFAULT NULL COMMENT '点位代号',
+  item_code varchar(64) DEFAULT NULL COMMENT '复测指标（由异常单带出，仅展示）',
+  current_step int DEFAULT '0' COMMENT '当前环节 0化验室检测 1水质科复核 2主管审定 3已走完全程',
+  status int DEFAULT '0' COMMENT '复测情形 0在办 1全程通过 2复核/审定否决(终态)',
+  open_by varchar(64) DEFAULT NULL COMMENT '开单人（恒为 system）',
+  open_time datetime DEFAULT NULL COMMENT '开单时刻（上报同刻）',
+  finish_by varchar(64) DEFAULT NULL COMMENT '终环落定人',
+  finish_time datetime DEFAULT NULL COMMENT '终环落定时刻',
+  final_result int DEFAULT NULL COMMENT '最终复核结论 1通过 2否决',
+  del_flag int DEFAULT '0' COMMENT '删除标记（只留不删）',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  update_by varchar(64) DEFAULT NULL COMMENT '更新者',
+  update_time datetime DEFAULT NULL COMMENT '更新时间',
+  remark varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_retest_no (retest_no),
+  UNIQUE KEY uk_retest_case (case_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='异常复测单（上报自动开、按环节链走、否决即止）';
+
+-- 复测环节台账：每次提交追加一笔（attempt_no 递增）。环节0 填检测项目/数值/时间，空表起步绝不预填；
+-- 环节1 必须照录环节0 三项，环节2 必须照录环节1 的复核结论；对不上(match_flag=0)也原样留痕、不开下一环，
+-- 报表出得去、可逐笔回退；对得上且非否决才推进。有效行(status=1)每环节至多一笔，落名后对所有人只读。
+CREATE TABLE IF NOT EXISTS t_zw_retest_step (
+  id bigint NOT NULL COMMENT '主键',
+  order_id bigint NOT NULL COMMENT '所属复测单',
+  step_no int NOT NULL COMMENT '环节 0化验室检测 1水质科复核 2主管审定',
+  attempt_no int NOT NULL COMMENT '本环节第几次提交（对不上留痕后可再交，次序只追加）',
+  fill_item varchar(64) DEFAULT NULL COMMENT '环节0填：检测项目（不预填）',
+  fill_qty decimal(12,2) DEFAULT NULL COMMENT '环节0填：检测数值（不预填）',
+  fill_test_at datetime DEFAULT NULL COMMENT '环节0填：检测时间（不预填）',
+  prev_item varchar(64) DEFAULT NULL COMMENT '环节1照录上一环：检测项目',
+  prev_qty decimal(12,2) DEFAULT NULL COMMENT '环节1照录上一环：检测数值',
+  prev_test_at datetime DEFAULT NULL COMMENT '环节1照录上一环：检测时间',
+  prev_result int DEFAULT NULL COMMENT '环节2照录上一环：复核结论 1通过 2否决',
+  step_result int DEFAULT NULL COMMENT '本环节结论 1通过/同意 2否决（环节0无结论留空；否决即止）',
+  opinion varchar(500) DEFAULT NULL COMMENT '本环节意见（否决必填）',
+  match_flag int DEFAULT '1' COMMENT '与上一环核对 1对得上 0对不上（对不上原样留痕、不开下一环）',
+  status int DEFAULT '0' COMMENT '本笔效力 0核对不符留痕(未生效) 1有效落名',
+  fill_by varchar(64) DEFAULT NULL COMMENT '本环节填报人（谁在本环节有权谁填）',
+  fill_time datetime DEFAULT NULL COMMENT '填报时刻',
+  del_flag int DEFAULT '0' COMMENT '删除标记（只留不删）',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_retest_step_attempt (order_id, step_no, attempt_no),
+  KEY idx_retest_step_order (order_id, step_no, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='复测环节填写台账（只追加、逐步复录、落名只读）';
+
+-- 供水户盯办单头：异常上报同刻由系统自开，复测全程通过、异常归档同刻由系统自结；没有人工开/闭口。
+-- 盯办周期另算（period_days），与采样周期、复测时限各管各的。
+CREATE TABLE IF NOT EXISTS t_zw_follow (
+  id bigint NOT NULL COMMENT '主键',
+  follow_no varchar(64) NOT NULL COMMENT '盯办单号（由异常单号带出，全表唯一）',
+  case_id bigint NOT NULL COMMENT '来源异常登记单',
+  case_no varchar(64) DEFAULT NULL COMMENT '来源异常单号',
+  site_no varchar(64) DEFAULT NULL COMMENT '点位代号',
+  water_user_name varchar(128) DEFAULT NULL COMMENT '被反映到的供水户名（开单时名录快照）',
+  contact_name varchar(64) DEFAULT NULL COMMENT '当前联系人（开单快照；后续每笔按名录现取，取错可在流水看见）',
+  contact_phone varchar(32) DEFAULT NULL COMMENT '联系电话（快照）',
+  period_days int DEFAULT '7' COMMENT '盯办周期自然日（另算，隔多少天盯一次）',
+  last_touch_at datetime DEFAULT NULL COMMENT '上一次盯办落定时刻（每笔结果都带上一次的时间）',
+  next_due_at datetime DEFAULT NULL COMMENT '下一次该盯的时刻（上一次盯完顺排，不靠人记）',
+  status int DEFAULT '0' COMMENT '盯办情形 0在盯 1已结（只有系统能结）',
+  open_time datetime DEFAULT NULL COMMENT '开单时刻（上报同刻，恒 system）',
+  close_time datetime DEFAULT NULL COMMENT '结案时刻（异常归档同刻，恒 system）',
+  close_note varchar(500) DEFAULT NULL COMMENT '结案说明',
+  del_flag int DEFAULT '0' COMMENT '删除标记（只留不删）',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  update_by varchar(64) DEFAULT NULL COMMENT '更新者',
+  update_time datetime DEFAULT NULL COMMENT '更新时间',
+  remark varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_follow_no (follow_no),
+  UNIQUE KEY uk_follow_case (case_id),
+  KEY idx_follow_due (status, next_due_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='供水户盯办单（系统自开自结、周期另算）';
+
+-- 盯办流水：系统每到点自开一笔（谁也不能手开），经办人只能填盯办结果，落名即只读。
+-- 每笔都带上一次盯办时间；盯七八次、隔几个月，也能一笔笔顺序翻出，漏办（逾期仍待办）一目了然。
+-- 只追加：拿着后一笔倒改前一笔没有任何写口。
+CREATE TABLE IF NOT EXISTS t_zw_follow_touch (
+  id bigint NOT NULL COMMENT '主键',
+  follow_id bigint NOT NULL COMMENT '所属盯办单',
+  seq int NOT NULL COMMENT '第几笔盯办（从 1 顺排，只追加）',
+  plan_at datetime NOT NULL COMMENT '系统开出时刻（什么时候要盯）',
+  due_at datetime NOT NULL COMMENT '本笔应在此时限前盯完',
+  contact_name varchar(64) DEFAULT NULL COMMENT '本笔该找谁（开出时按名录现取，不沿用旧错联系人）',
+  contact_phone varchar(32) DEFAULT NULL COMMENT '本笔该找的电话（现取）',
+  prev_touch_at datetime DEFAULT NULL COMMENT '上一次盯办时刻（首笔盯开单时刻）',
+  result varchar(24) DEFAULT NULL COMMENT '盯办结果 REACHED已联系上/NOT_REACHABLE联系不上/WRONG_CONTACT联系人有误',
+  detail varchar(500) DEFAULT NULL COMMENT '本次盯办情况（当天做了什么）',
+  actual_touch_at datetime DEFAULT NULL COMMENT '实际盯办时刻（填报人填，不空过）',
+  fill_by varchar(64) DEFAULT NULL COMMENT '盯办经办人',
+  fill_time datetime DEFAULT NULL COMMENT '填报时刻',
+  status int DEFAULT '0' COMMENT '本笔情形 0待办(系统已开未填) 1已办（含联系不上/联系人有误，也算盯过一笔）',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_follow_touch_seq (follow_id, seq),
+  KEY idx_follow_touch_status (follow_id, status, due_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='供水户盯办流水（系统开、经办填、只追加）';
+
+-- 供水户名录种子：ZS00 在册（联系人正确）、ZS02 在册但联系人已换机（演示"联系人取错/联系不上"）。
+INSERT IGNORE INTO t_zw_water_user (id, site_no, user_name, contact_name, contact_phone, status, del_flag, create_by, create_time, remark)
+VALUES (20, 'ZS00', '城北供水服务所', '张保供', '13800000001', 0, 0, 'seed', NOW(), '城北水源地对应供水户'),
+       (21, 'ZS02', '青西供水服务站', '李旧号（已调岗）', '13900000002', 0, 0, 'seed', NOW(), '登记联系人已调岗，实测联系人有误；现行联系人 王新号 13700000003');
+
+-- 演示用异常①：9003 行（ZS00 2026-09-18 余氯 0.71，严重超标）已上报、已反映到供水户；
+-- 复测单开到水质科复核环节，且留有一笔"照录对不上"的留痕；盯办已盯成一笔、第二笔待办（隔周期可见）。
+INSERT IGNORE INTO t_zw_abn_case (id, case_no, imp_row_id, batch_no, row_no, site_no, item_code, sample_type, test_at, test_date,
+  qty, grade_level, limit_value, over_qty, rule_code, rule_name, rule_eff_date, need_water_stop, need_retest, verdict_note,
+  revise_no, status, report_by, report_time, del_flag, create_by, create_time)
+VALUES (9201, 'YC20260918-001', 9003, 'B202609', 1, 'ZS00', 'CL', '水源水', '2026-09-18 09:00:00', '2026-09-18 00:00:00',
+  0.71, 4, 0.50, 0.21, 'CL-SW-2026', '水源水余氯分档线', '2026-01-01 00:00:00', 1, 1, '读数 0.71 越过严重超标档界值 0.50，超 0.21',
+  0, 1, 'seed', '2026-09-18 10:00:00', 0, 'seed', '2026-09-18 09:30:00');
+
+INSERT IGNORE INTO t_zw_abn_trace (id, case_id, seq, action, from_status, to_status, detail, operator, action_time)
+VALUES (9210, 9201, 1, 'REGISTER', NULL, 0, '导入批次 B202609 第1行定级为严重超标，自动登记：界值 0.50，超 0.21，建议停水+复测', 'system', '2026-09-18 09:30:00'),
+       (9211, 9201, 2, 'REPORT', 0, 1, '异常上报，反映到供水户「城北供水服务所」名下；系统同刻开复测单与盯办单', 'seed', '2026-09-18 10:00:00'),
+       (9212, 9201, 3, 'RETEST_OPEN', 1, 1, '复测单 YC20260918-001-HC 自动开立，从化验室检测环节起步', 'system', '2026-09-18 10:00:00');
+
+INSERT IGNORE INTO t_zw_retest_order (id, retest_no, case_id, case_no, site_no, item_code, current_step, status, open_by, open_time, del_flag, create_by, create_time)
+VALUES (9301, 'YC20260918-001-HC', 9201, 'YC20260918-001', 'ZS00', 'CL', 1, 0, 'system', '2026-09-18 10:00:00', 0, 'system', '2026-09-18 10:00:00');
+
+-- 环节0 已有效落名；环节1 第1次照录数值对不上（留痕、未推进），当前仍停在环节1 等待重新提交。
+INSERT IGNORE INTO t_zw_retest_step (id, order_id, step_no, attempt_no, fill_item, fill_qty, fill_test_at,
+  prev_item, prev_qty, prev_test_at, prev_result, step_result, opinion, match_flag, status, fill_by, fill_time, del_flag)
+VALUES (9401, 9301, 0, 1, 'CL', 0.68, '2026-09-19 09:00:00',
+  NULL, NULL, NULL, NULL, NULL, '化验室复测取样', 1, 1, 'lab01', '2026-09-19 10:00:00', 0),
+       (9402, 9301, 1, 1, NULL, NULL, NULL,
+  'CL', 0.63, '2026-09-19 09:00:00', NULL, 1, '照录复核', 0, 0, 'water01', '2026-09-20 14:00:00', 0);
+
+INSERT IGNORE INTO t_zw_follow (id, follow_no, case_id, case_no, site_no, water_user_name, contact_name, contact_phone,
+  period_days, last_touch_at, next_due_at, status, open_time, del_flag, create_by, create_time)
+VALUES (9501, 'YC20260918-001-DB', 9201, 'YC20260918-001', 'ZS00', '城北供水服务所', '张保供', '13800000001',
+  7, '2026-09-25 10:30:00', '2026-10-02 10:00:00', 0, '2026-09-18 10:00:00', 0, 'system', '2026-09-18 10:00:00');
+
+-- 第1笔已联系上（带上一次=开单时刻）；第2笔已到点开出、待办（演示漏办红点与逐笔倒查）。
+INSERT IGNORE INTO t_zw_follow_touch (id, follow_id, seq, plan_at, due_at, contact_name, contact_phone, prev_touch_at,
+  result, detail, actual_touch_at, fill_by, fill_time, status)
+VALUES (9601, 9501, 1, '2026-09-18 10:00:00', '2026-09-25 10:00:00', '张保供', '13800000001', '2026-09-18 10:00:00',
+  'REACHED', '已电话告知停水预警与复测安排，对方知悉', '2026-09-25 10:30:00', 'follow01', '2026-09-25 10:31:00', 1),
+       (9602, 9501, 2, '2026-10-02 10:00:00', '2026-10-09 10:00:00', '张保供', '13800000001', '2026-09-25 10:30:00',
+  NULL, NULL, NULL, NULL, NULL, 0);
+
+-- 演示用异常②：9001 行（ZS00 2026-07-18 余氯 0.62，严重超标）已登记未上报——可订正、可上报。
+INSERT IGNORE INTO t_zw_abn_case (id, case_no, imp_row_id, batch_no, row_no, site_no, item_code, sample_type, test_at, test_date,
+  qty, grade_level, limit_value, over_qty, rule_code, rule_name, rule_eff_date, need_water_stop, need_retest, verdict_note,
+  revise_no, status, del_flag, create_by, create_time)
+VALUES (9202, 'YC20260718-001', 9001, 'B202607', 1, 'ZS00', 'CL', '水源水', '2026-07-18 09:00:00', '2026-07-18 00:00:00',
+  0.62, 4, 0.50, 0.12, 'CL-SW-2026', '水源水余氯分档线', '2026-01-01 00:00:00', 1, 1, '读数 0.62 越过严重超标档界值 0.50，超 0.12',
+  0, 0, 0, 'system', '2026-07-18 09:30:00');
+INSERT IGNORE INTO t_zw_abn_trace (id, case_id, seq, action, from_status, to_status, detail, operator, action_time)
+VALUES (9213, 9202, 1, 'REGISTER', NULL, 0, '导入批次 B202607 第1行定级为严重超标，自动登记：界值 0.50，超 0.12，建议停水+复测', 'system', '2026-07-18 09:30:00');
+
+-- 水质异常判定留痕：菜单与按钮权限（目录 880200；只读人人可查，写口按环节单独授）。
+INSERT IGNORE INTO t_sys_permission (id, name, descripion, url, is_blank, pid, perms, type, icon, order_num, visible, create_by, create_time)
+VALUES (880200, '水质异常判定留痕', '异常判定自动登记、订正上报、复测环节、归档倒查', '/zwAbn/view', 0, 0, 'zw:zwAbn:view', 1, 'layui-icon layui-icon-alert', 61, 0, 'seed', NOW()),
+       (880201, '异常登记台账', '异常判定台账查询与全过程倒查（只读人人可查）', '/zwAbn/list', 0, 880200, 'zw:zwAbn:list', 2, NULL, NULL, 0, 'seed', NOW()),
+       (880202, '判定订正', '上报前把判定档位/停水复测建议订正一次（订过/报过/归档皆闭口）', '/zwAbn/correct', 0, 880200, 'zw:zwAbn:correct', 2, NULL, NULL, 0, 'seed', NOW()),
+       (880203, '异常上报', '同一笔异常只准上报一次；报后台账只读并自动开复测单/盯办单', '/zwAbn/report', 0, 880200, 'zw:zwAbn:report', 2, NULL, NULL, 0, 'seed', NOW()),
+       (880204, '复测-化验室检测', '复测环节0：检测项目/数值/时间由本环节填报，不预填', '/zwAbn/retestStep', 0, 880200, 'zw:zwRetest:step0', 2, NULL, NULL, 0, 'seed', NOW()),
+       (880205, '复测-水质科复核', '复测环节1：照录环节0结果并给复核结论，否决即止', '/zwAbn/retestStep', 0, 880200, 'zw:zwRetest:step1', 2, NULL, NULL, 0, 'seed', NOW()),
+       (880206, '复测-主管审定', '复测环节2：照录环节1结论并给审定结论，通过即归档', '/zwAbn/retestStep', 0, 880200, 'zw:zwRetest:step2', 2, NULL, NULL, 0, 'seed', NOW()),
+       (880207, '异常倒查报表导出', '复测环节逐项核对与盯办流水导出（对不上/漏办照台账出）', '/zwAbn/export', 0, 880200, 'zw:zwAbn:export', 2, NULL, NULL, 0, 'seed', NOW()),
+       (880208, '供水户盯办台账', '盯办单与逐笔流水查询（该找谁/盯没盯/历次结果）', '/zwFollow/view', 0, 0, 'zw:zwFollow:view', 1, 'layui-icon layui-icon-phone', 62, 0, 'seed', NOW()),
+       (880209, '盯办结果填报', '系统开出的盯办笔，由经办人填结果，落名只读', '/zwFollow/fill', 0, 880208, 'zw:zwFollow:fill', 2, NULL, NULL, 0, 'seed', NOW()),
+       (880210, '盯办跑一轮', '按另算周期系统开盯办笔（定时/手动同一口径）', '/zwFollow/run', 0, 880208, 'zw:zwFollow:run', 2, NULL, NULL, 0, 'seed', NOW());
+-- 管理员挂全套
+INSERT IGNORE INTO t_sys_permission_role (id, role_id, permission_id, create_by, create_time)
+VALUES (8802001, 488243256161730560, 880200, 'seed', NOW()),
+       (8802002, 488243256161730560, 880201, 'seed', NOW()),
+       (8802003, 488243256161730560, 880202, 'seed', NOW()),
+       (8802004, 488243256161730560, 880203, 'seed', NOW()),
+       (8802005, 488243256161730560, 880204, 'seed', NOW()),
+       (8802006, 488243256161730560, 880205, 'seed', NOW()),
+       (8802007, 488243256161730560, 880206, 'seed', NOW()),
+       (8802008, 488243256161730560, 880207, 'seed', NOW()),
+       (8802009, 488243256161730560, 880208, 'seed', NOW()),
+       (8802010, 488243256161730560, 880209, 'seed', NOW()),
+       (8802011, 488243256161730560, 880210, 'seed', NOW());
+-- 普通用户角色：只读——台账、倒查、导出，写口不授
+INSERT IGNORE INTO t_sys_permission_role (id, role_id, permission_id, create_by, create_time)
+VALUES (8802021, 488289006124007424, 880200, 'seed', NOW()),
+       (8802022, 488289006124007424, 880201, 'seed', NOW()),
+       (8802023, 488289006124007424, 880207, 'seed', NOW()),
+       (8802024, 488289006124007424, 880208, 'seed', NOW());
+
+-- 盯办定时任务种子（默认暂停 status=1；在定时任务里启用后，每天 08:07 按另算周期系统开盯办笔）。
+INSERT IGNORE INTO t_sys_quartz_job (id, job_name, job_group, invoke_target, cron_expression, misfire_policy, concurrent, status, create_by, create_time, remark)
+VALUES (880290001, '供水户盯办开笔', 'ZW', 'zwFollowTask.runCycle()', '0 7 8 * * ?', '2', '1', 1, 'seed', NOW(), '按盯办单各自周期到点开待办笔；逾期未办不开新笔，漏办留账');
+
+-- 演示用异常③：9002 行（ZS00 2026-08-18 余氯 0.65，严重超标）已登记未上报（连续三个月超标之中的一月）。
+INSERT IGNORE INTO t_zw_abn_case (id, case_no, imp_row_id, batch_no, row_no, site_no, item_code, sample_type, test_at, test_date,
+  qty, grade_level, limit_value, over_qty, rule_code, rule_name, rule_eff_date, need_water_stop, need_retest, verdict_note,
+  revise_no, status, del_flag, create_by, create_time)
+VALUES (9203, 'YC20260818-001', 9002, 'B202608', 1, 'ZS00', 'CL', '水源水', '2026-08-18 09:00:00', '2026-08-18 00:00:00',
+  0.65, 4, 0.50, 0.15, 'CL-SW-2026', '水源水余氯分档线', '2026-01-01 00:00:00', 1, 1, '读数 0.65 越过严重超标档界值 0.50，超 0.15',
+  0, 0, 0, 'system', '2026-08-18 09:30:00');
+INSERT IGNORE INTO t_zw_abn_trace (id, case_id, seq, action, from_status, to_status, detail, operator, action_time)
+VALUES (9214, 9203, 1, 'REGISTER', NULL, 0, '导入批次 B202608 第1行定级为严重超标，自动登记：界值 0.50，超 0.15，建议停水+复测', 'system', '2026-08-18 09:30:00');

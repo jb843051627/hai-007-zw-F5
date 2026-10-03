@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('水质异常判定留痕')"/>
+</head>
+<body class="pear-container">
+<div class="layui-card">
+    <div class="layui-card-body">
+        <form class="layui-form" action="">
+            <div class="layui-form-item">
+                <label class="layui-form-label">异常单号</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="caseNo" placeholder="如 YC20260918-001" class="layui-input">
+                </div>
+                <label class="layui-form-label">点位编号</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="siteNo" placeholder="如 ZS00" class="layui-input">
+                </div>
+                <label class="layui-form-label">指标</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="itemCode" placeholder="如 CL" class="layui-input">
+                </div>
+                <label class="layui-form-label">判定档位</label>
+                <div class="layui-input-inline">
+                    <select name="gradeLevel" class="layui-input">
+                        <option value="">全部</option>
+                        <option value="2">关注</option>
+                        <option value="3">超标</option>
+                        <option value="4">严重超标</option>
+                    </select>
+                </div>
+                <label class="layui-form-label">台账情形</label>
+                <div class="layui-input-inline">
+                    <select name="status" class="layui-input">
+                        <option value="">全部</option>
+                        <option value="0">已登记·未上报</option>
+                        <option value="1">已上报·只读</option>
+                        <option value="2">已归档结案</option>
+                    </select>
+                </div>
+                <button class="pear-btn pear-btn-md pear-btn-primary" lay-submit lay-filter="abn-query">
+                    <i class="layui-icon layui-icon-search"></i> 查询
+                </button>
+                <button type="reset" class="pear-btn pear-btn-md">
+                    <i class="layui-icon layui-icon-refresh"></i> 重置
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<div class="layui-card">
+    <div class="layui-card-body">
+        <button shiro:hasPermission="zw:zwAbn:export" type="button"
+                class="pear-btn pear-btn-success pear-btn-md" id="btn-export">
+            <i class="layui-icon layui-icon-download-circle"></i> 导出复测环节核对报表
+        </button>
+        <span style="margin-left:12px;color:#999;font-size:12px;">
+            异常一判出即自动登记，页面没有新增口；同一笔异常只准上报一次，报后只读不可撤。
+        </span>
+    </div>
+</div>
+<div class="layui-card">
+    <div class="layui-card-body">
+        <table id="abn-table" lay-filter="abn-table"></table>
+    </div>
+</div>
+
+<script type="text/html" id="abn-bar">
+    <a class="layui-btn layui-btn-xs pear-btn-primary" lay-event="detail">倒查</a>
+    {{#  if(d.status == 0 && d.reviseNo == 0){ }}
+    <button shiro:hasPermission="zw:zwAbn:correct" type="button"
+            class="pear-btn pear-btn-warming pear-btn-xs" lay-event="correct">判定订正</button>
+    {{#  } }}
+    {{#  if(d.status == 0){ }}
+    <button shiro:hasPermission="zw:zwAbn:report" type="button"
+            class="pear-btn pear-btn-danger pear-btn-xs" lay-event="report">异常上报</button>
+    {{#  } }}
+</script>
+
+<script type="text/html" id="abn-grade">
+    {{#  if(d.gradeLevel == 2){ }}<span class="layui-badge layui-bg-orange">关注</span>
+    {{#  } else if(d.gradeLevel == 3){ }}<span class="layui-badge">超标</span>
+    {{#  } else if(d.gradeLevel == 4){ }}<span class="layui-badge">严重超标</span>
+    {{#  } else { }}<span class="layui-badge layui-bg-gray">{{ d.gradeLevel }}</span>{{#  } }}
+</script>
+
+<script type="text/html" id="abn-status">
+    {{#  if(d.status == 0){ }}<span class="layui-badge layui-bg-gray">已登记·未上报</span>
+    {{#  } else if(d.status == 1){ }}<span class="layui-badge layui-bg-blue">已上报·只读</span>
+    {{#  } else { }}<span class="layui-badge layui-bg-green">已归档结案</span>{{#  } }}
+</script>
+
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['table', 'form', 'jquery', 'layer'], function () {
+        let table = layui.table;
+        let form = layui.form;
+        let $ = layui.jquery;
+        let layer = layui.layer;
+
+        let MODULE_PATH = rootPath + "/zwAbn/";
+        let cols = [[
+            {title: 'ID', field: 'id', align: 'center', hide: true},
+            {title: '异常单号', field: 'caseNo', align: 'center', width: 150},
+            {title: '点位', field: 'siteNo', align: 'center', width: 80},
+            {title: '指标', field: 'itemCode', align: 'center', width: 70},
+            {title: '样本类别', field: 'sampleType', align: 'center', width: 90},
+            {title: '哪天的水', field: 'testAt', align: 'center', width: 160},
+            {title: '检测值', field: 'qty', align: 'center', width: 80},
+            {title: '判定档位', field: 'gradeLevel', align: 'center', width: 100, templet: '#abn-grade'},
+            {title: '对照界值', field: 'limitValue', align: 'center', width: 90},
+            {title: '超了多少', field: 'overQty', align: 'center', width: 90},
+            {title: '标准线', field: 'ruleCode', align: 'center', width: 130},
+            {title: '停水', field: 'needWaterStop', align: 'center', width: 70,
+                templet: function (d) { return d.needWaterStop === 1 ? '要' : '不要'; }},
+            {title: '复测', field: 'needRetest', align: 'center', width: 70,
+                templet: function (d) { return d.needRetest === 1 ? '要' : '不要'; }},
+            {title: '订正', field: 'reviseNo', align: 'center', width: 70,
+                templet: function (d) { return d.reviseNo > 0 ? '已订正' : '未订正'; }},
+            {title: '台账情形', field: 'status', align: 'center', width: 120, templet: '#abn-status'},
+            {title: '上报人', field: 'reportBy', align: 'center', width: 90},
+            {title: '操作', toolbar: '#abn-bar', align: 'center', width: 210, fixed: 'right'}
+        ]];
+
+        table.render({
+            elem: '#abn-table',
+            url: MODULE_PATH + 'list',
+            page: true,
+            method: 'get',
+            cols: cols,
+            skin: 'line'
+        });
+
+        form.on('submit(abn-query)', function (data) {
+            table.reload('abn-table', {where: data.field, page: {curr: 1}});
+            return false;
+        });
+
+        $('#btn-export').on('click', function () {
+            window.location.href = MODULE_PATH + 'export';
+        });
+
+        table.on('tool(abn-table)', function (obj) {
+            if (obj.event === 'detail') {
+                window.location.href = MODULE_PATH + 'detail?id=' + obj.data.id;
+            }
+            if (obj.event === 'report') {
+                layer.confirm('上报后该异常台账即只读（不能改、不能撤、不能改名），系统同时自开复测单和供水户盯办单。确认上报？',
+                    {icon: 3, title: '异常只报一次'}, function (idx) {
+                        layer.close(idx);
+                        $.ajax({
+                            url: MODULE_PATH + 'report',
+                            type: 'post',
+                            data: {id: obj.data.id},
+                            success: function (res) {
+                                layer.msg(res.msg, {icon: res.code === 200 ? 1 : 2});
+                                if (res.code === 200) {
+                                    table.reload('abn-table');
+                                }
+                            }
+                        });
+                    });
+            }
+            if (obj.event === 'correct') {
+                openCorrect(obj.data);
+            }
+        });
+
+        // 判定订正：只准改档位/停水/复测/说明，点位、哪天的水、指标、检测值、标准快照不进表单
+        function openCorrect(d) {
+            layer.open({
+                type: 1,
+                title: '判定订正（仅可订正一次；点位/检测日/指标/检测值/标准不可改）',
+                area: ['520px', '430px'],
+                content:
+                    '<form class="layui-form" style="padding:20px 10px 0 0;" id="correct-form">' +
+                    '<div class="layui-form-item"><label class="layui-form-label">判定档位</label>' +
+                    '<div class="layui-input-block"><select name="gradeLevel">' +
+                    '<option value="2"' + (d.gradeLevel === 2 ? ' selected' : '') + '>关注</option>' +
+                    '<option value="3"' + (d.gradeLevel === 3 ? ' selected' : '') + '>超标</option>' +
+                    '<option value="4"' + (d.gradeLevel === 4 ? ' selected' : '') + '>严重超标</option>' +
+                    '</select></div></div>' +
+                    '<div class="layui-form-item"><label class="layui-form-label">要不要停水</label>' +
+                    '<div class="layui-input-block"><select name="needWaterStop">' +
+                    '<option value="0"' + (d.needWaterStop !== 1 ? ' selected' : '') + '>不要</option>' +
+                    '<option value="1"' + (d.needWaterStop === 1 ? ' selected' : '') + '>要</option>' +
+                    '</select></div></div>' +
+                    '<div class="layui-form-item"><label class="layui-form-label">要不要复测</label>' +
+                    '<div class="layui-input-block"><select name="needRetest">' +
+                    '<option value="0"' + (d.needRetest !== 1 ? ' selected' : '') + '>不要</option>' +
+                    '<option value="1"' + (d.needRetest === 1 ? ' selected' : '') + '>要</option>' +
+                    '</select></div></div>' +
+                    '<div class="layui-form-item"><label class="layui-form-label">订正说明</label>' +
+                    '<div class="layui-input-block"><textarea name="note" placeholder="为什么改判定" class="layui-textarea"></textarea></div></div>' +
+                    '<div class="layui-form-item"><div class="layui-input-block">' +
+                    '<button class="pear-btn pear-btn-primary" lay-submit lay-filter="correct-submit">提交订正</button>' +
+                    '</div></div></form>',
+                success: function () {
+                    form.render();
+                    form.on('submit(correct-submit)', function (data) {
+                        data.field.id = d.id;
+                        $.ajax({
+                            url: MODULE_PATH + 'correct',
+                            type: 'post',
+                            data: data.field,
+                            success: function (res) {
+                                layer.msg(res.msg, {icon: res.code === 200 ? 1 : 2});
+                                if (res.code === 200) {
+                                    layer.closeAll();
+                                    table.reload('abn-table');
+                                }
+                            }
+                        });
+                        return false;
+                    });
+                }
+            });
+        }
+    });
+</script>
+</body>
+</html>

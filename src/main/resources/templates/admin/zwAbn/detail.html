@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('水质异常判定倒查')"/>
+    <style>
+        .kv {margin-right:18px;font-size:13px;color:#666;}
+        .kv b{color:#333;}
+        .step-box {border:1px solid #e2e2e2;border-radius:6px;padding:12px 14px;margin-bottom:12px;background:#fff;}
+        .step-current {border-color:#FFB800;box-shadow:0 0 0 2px rgba(255,184,0,.15);}
+        .step-done {border-color:#16b777;}
+        .step-locked {opacity:.85;}
+        .mismatch-box {border:1px dashed #FF5722;background:#fff6f5;color:#a94442;border-radius:6px;padding:8px 12px;margin:6px 0;}
+        table.mini {width:100%;font-size:13px;border-collapse:collapse;}
+        table.mini th, table.mini td {border:1px solid #eee;padding:5px 8px;text-align:left;}
+        .trace-row td {padding:6px 8px;border-bottom:1px dashed #eee;font-size:13px;vertical-align:top;}
+    </style>
+</head>
+<body class="pear-container">
+
+<!-- 判定快照（登记即钉死） -->
+<div class="layui-card">
+    <div class="layui-card-header" style="font-weight:600;">
+        <span th:text="${ac.caseNo}"></span>
+        <span class="layui-badge layui-bg-gray" th:if="${ac.status == 0}">已登记·未上报</span>
+        <span class="layui-badge layui-bg-blue" th:if="${ac.status == 1}">已上报·只读</span>
+        <span class="layui-badge layui-bg-green" th:if="${ac.status == 2}">已归档结案</span>
+        <span class="layui-badge layui-bg-orange" th:if="${ac.reviseNo > 0}">已订正 1 次</span>
+    </div>
+    <div class="layui-card-body">
+        <div>
+            <span class="kv">点位：<b th:text="${ac.siteNo}"></b></span>
+            <span class="kv">指标：<b th:text="${ac.itemCode}"></b></span>
+            <span class="kv">样本类别：<b th:text="${ac.sampleType}"></b></span>
+            <span class="kv">哪天的水：<b th:text="${ac.testAt == null ? '' : #dates.format(ac.testAt,'yyyy-MM-dd HH:mm:ss')}"></b></span>
+        </div>
+        <div style="margin-top:6px;">
+            <span class="kv">当天检测值：<b th:text="${ac.qty}"></b></span>
+            <span class="kv">判定档位：<b th:text="${ac.gradeLevel == 2 ? '关注' : (ac.gradeLevel == 3 ? '超标' : (ac.gradeLevel == 4 ? '严重超标' : ac.gradeLevel))}"></b></span>
+            <span class="kv">标准线：<b th:text="${ac.ruleCode}"></b> <span th:text="${ac.ruleName}" style="color:#999;"></span></span>
+            <span class="kv">标准生效日：<b th:text="${ac.ruleEffDate == null ? '' : #dates.format(ac.ruleEffDate,'yyyy-MM-dd HH:mm:ss')}"></b></span>
+        </div>
+        <div style="margin-top:6px;">
+            <span class="kv">对照界值：<b th:text="${ac.limitValue == null ? '该档无在设界值' : ac.limitValue}"></b></span>
+            <span class="kv">超了多少：<b th:text="${ac.overQty == null ? '—' : ac.overQty}"></b></span>
+            <span class="kv">停水：<b th:text="${ac.needWaterStop == 1 ? '要' : '不要'}"></b></span>
+            <span class="kv">复测：<b th:text="${ac.needRetest == 1 ? '要' : '不要'}"></b></span>
+        </div>
+        <div style="margin-top:6px;color:#555;font-size:13px;" th:text="${ac.verdictNote}"></div>
+        <div style="margin-top:6px;color:#999;font-size:12px;">
+            上报人：<span th:text="${ac.reportBy}"></span>
+            <span th:if="${ac.reportTime != null}"> 上报时刻：<span th:text="${#dates.format(ac.reportTime,'yyyy-MM-dd HH:mm:ss')}"></span></span>
+            <th:block th:if="${ac.status == 2}">｜归档人：<span th:text="${ac.archiveBy}"></span>
+                <span th:if="${ac.archiveTime != null}"> 归档时刻：<span th:text="${#dates.format(ac.archiveTime,'yyyy-MM-dd HH:mm:ss')}"></span></span>
+                <span th:if="${ac.archiveNote != null}"> ｜<span th:text="${ac.archiveNote}"></span></span>
+            </th:block>
+        </div>
+    </div>
+</div>
+
+<!-- 点回去看当日原始检测记录 + 当天生效标准 -->
+<div class="layui-card">
+    <div class="layui-card-header" style="font-weight:600;">当日原始检测记录 与 当天生效标准</div>
+    <div class="layui-card-body">
+        <table class="mini" th:if="${sourceRow != null}">
+            <tr><th style="width:120px;">原始批次/行次</th><td>
+                <a th:href="@{/zwImpRow/detail(batchNo=${sourceRow.batchNo})}"
+                   shiro:hasPermission="zw:zwImpRow:view"
+                   th:text="${sourceRow.batchNo + ' 第' + sourceRow.rowNo + '行'}" target="_blank"></a>
+                <span shiro:lacksPermission="zw:zwImpRow:view"
+                      th:text="${sourceRow.batchNo + ' 第' + sourceRow.rowNo + '行'}"></span>
+            </td><th style="width:120px;">原始行原文</th><td th:text="${sourceRow.rawLine}"></td></tr>
+            <tr><th>原始读数/时间</th><td th:text="${sourceRow.qty + '　' + (sourceRow.testAt == null ? '' : #dates.format(sourceRow.testAt,'yyyy-MM-dd HH:mm:ss'))}"></td>
+                <th>定级三件套</th><td th:text="${sourceRow.gradeLevel + ' / ' + sourceRow.ruleCode + ' / ' + (sourceRow.ruleEffDate == null ? '' : #dates.format(sourceRow.ruleEffDate,'yyyy-MM-dd HH:mm:ss'))}"></td></tr>
+        </table>
+        <div th:if="${sourceRow == null}" style="color:#999;font-size:13px;">未挂接原始检测行（登记时来源缺失）。</div>
+        <table class="mini" th:if="${rule != null}" style="margin-top:8px;">
+            <tr><th style="width:120px;">判定时标准条文</th>
+                <td th:text="${rule.ruleCode + ' ' + rule.ruleName + '（' + rule.sampleType + '）关注≤' + rule.th1Max
+                    + '，超标≤' + rule.th2Max + '，严重超标≤' + (rule.th3Max == null ? '不设' : rule.th3Max)
+                    + '；' + #dates.format(rule.effStart,'yyyy-MM-dd HH:mm:ss') + ' 起现行' + (rule.effEnd == null ? '' : '，' + #dates.format(rule.effEnd,'yyyy-MM-dd HH:mm:ss') + ' 让位')}"></td></tr>
+        </table>
+    </div>
+</div>
+
+<!-- 判定完整过程：从最后一步排回第一步 -->
+<div class="layui-card">
+    <div class="layui-card-header" style="font-weight:600;">判定完整过程（倒序：最后一步在最上）</div>
+    <div class="layui-card-body">
+        <table style="width:100%;">
+            <tr th:each="t : ${tracesDesc}" class="trace-row">
+                <td style="width:160px;" th:text="${#dates.format(t.actionTime,'yyyy-MM-dd HH:mm:ss')}"></td>
+                <td style="width:100px;">
+                    <span class="layui-badge layui-bg-blue"
+                          th:text="${t.action == 'REGISTER' ? '自动登记' : (t.action == 'CORRECT' ? '判定订正' : (t.action == 'REPORT' ? '异常上报' : (t.action == 'RETEST_OPEN' ? '复测开单' : '归档结案')))}"></span>
+                </td>
+                <td style="width:90px;color:#666;" th:text="${t.operator}"></td>
+                <td th:text="${t.detail}"></td>
+            </tr>
+        </table>
+    </div>
+</div>
+
+<!-- 复测单：三环按环节开权限，逐步复录，否决即止 -->
+<div class="layui-card" th:if="${order != null}">
+    <div class="layui-card-header" style="font-weight:600;">
+        复测单 <span th:text="${order.retestNo}"></span>
+        <span class="layui-badge layui-bg-orange" th:if="${order.status == 0}">在办·当前：<span th:text="${order.currentStep == 0 ? '化验室检测' : (order.currentStep == 1 ? '水质科复核' : (order.currentStep == 2 ? '主管审定' : '已走完全程'))}"></span></span>
+        <span class="layui-badge layui-bg-green" th:if="${order.status == 1}">全程通过</span>
+        <span class="layui-badge" th:if="${order.status == 2}">已否决终止</span>
+    </div>
+    <div class="layui-card-body">
+        <th:block th:each="s : ${stepNos}">
+            <div class="step-box"
+                 th:classappend="${(order.currentStep == s && order.status == 0) ? ' step-current' : ((order.currentStep > s || order.status == 1) ? ' step-done' : ' step-locked')}">
+                <b th:text="${s == 0 ? '环节一 · 化验室检测' : (s == 1 ? '环节二 · 水质科复核' : '环节三 · 主管审定')}"></b>
+
+                <!-- 本环节历次提交（含核对不符留痕），落名只读 -->
+                <th:block th:with="stepRows=${stepRowsMap.get(s)}">
+                    <div th:each="r : ${stepRows}" style="margin-top:8px;">
+                        <div class="mismatch-box" th:if="${r.status == 0}">
+                            第 <span th:text="${r.attemptNo}"></span> 次提交·照录对不上（留痕未生效，未下放）：
+                            <span th:if="${s == 1}" th:text="'录成 ' + ${r.prevItem} + '/' + ${r.prevQty} + '/' + ${r.prevTestAt == null ? '' : #dates.format(r.prevTestAt,'yyyy-MM-dd HH:mm:ss')}"></span>
+                            <span th:if="${s == 2}" th:text="'录成上一环结论 ' + (${r.prevResult == 1 ? '通过' : '否决'})"></span>
+                            ｜<span th:text="${r.fillBy} + ' ' + ${r.fillTime == null ? '' : #dates.format(r.fillTime,'yyyy-MM-dd HH:mm:ss')}"></span>
+                        </div>
+                        <div th:if="${r.status == 1}" style="font-size:13px;color:#333;border-top:1px dashed #eee;padding-top:6px;">
+                            <span class="layui-badge layui-bg-green">有效落名·只读</span>
+                            <th:block th:if="${s == 0}">
+                                检测项目 <b th:text="${r.fillItem}"></b>；数值 <b th:text="${r.fillQty}"></b>；
+                                检测时间 <b th:text="${r.fillTestAt == null ? '' : #dates.format(r.fillTestAt,'yyyy-MM-dd HH:mm:ss')}"></b>
+                            </th:block>
+                            <th:block th:if="${s == 1}">
+                                照录 <b th:text="${r.prevItem} + ' / ' + ${r.prevQty} + ' / ' + ${r.prevTestAt == null ? '' : #dates.format(r.prevTestAt,'yyyy-MM-dd HH:mm:ss')}"></b>；
+                                复核结论 <b th:text="${r.stepResult == 1 ? '通过' : '否决'}"></b>
+                            </th:block>
+                            <th:block th:if="${s == 2}">
+                                照录上一环结论 <b th:text="${r.prevResult == 1 ? '通过' : '否决'}"></b>；
+                                审定结论 <b th:text="${r.stepResult == 1 ? '通过（系统据此归档）' : '否决（链终止）'}"></b>
+                            </th:block>
+                            <span style="color:#999;">｜<span th:text="${r.fillBy}"></span>
+                                <span th:text="${r.fillTime == null ? '' : #dates.format(r.fillTime,'yyyy-MM-dd HH:mm:ss')}"></span></span>
+                            <span th:if="${r.opinion != null && !r.opinion.isEmpty()}"> ｜意见：<span th:text="${r.opinion}"></span></span>
+                        </div>
+                    </div>
+                </th:block>
+
+                <!-- 当前环节且本登录人有权，才开格子；其余环节无任何可提交口 -->
+                <th:block th:if="${order.currentStep == s && order.status == 0 && stepEditable.get(s)}">
+                    <form class="layui-form" th:id="'step-form-' + ${s}" style="margin-top:12px;">
+                        <th:block th:if="${s == 0}">
+                            <div class="layui-form-item">
+                                <label class="layui-form-label">检测项目</label>
+                                <div class="layui-input-inline"><input class="layui-input" name="item" placeholder="本环节填，不预填"></div>
+                                <label class="layui-form-label">检测数值</label>
+                                <div class="layui-input-inline"><input class="layui-input" name="qty" placeholder="如 0.68"></div>
+                                <label class="layui-form-label">检测时间</label>
+                                <div class="layui-input-inline"><input class="layui-input" name="testAt" placeholder="yyyy-MM-dd HH:mm:ss"></div>
+                            </div>
+                        </th:block>
+                        <th:block th:if="${s == 1}">
+                            <div class="layui-form-item">
+                                <label class="layui-form-label">照录检测项目</label>
+                                <div class="layui-input-inline"><input class="layui-input" name="item"></div>
+                                <label class="layui-form-label">照录检测数值</label>
+                                <div class="layui-input-inline"><input class="layui-input" name="qty"></div>
+                                <label class="layui-form-label">照录检测时间</label>
+                                <div class="layui-input-inline"><input class="layui-input" name="testAt" placeholder="yyyy-MM-dd HH:mm:ss"></div>
+                            </div>
+                            <div class="layui-form-item">
+                                <label class="layui-form-label">复核结论</label>
+                                <div class="layui-input-inline">
+                                    <select name="stepResult"><option value="">请选择</option>
+                                        <option value="1">通过</option><option value="2">否决（终止）</option></select>
+                                </div>
+                                <label class="layui-form-label">本环意见</label>
+                                <div class="layui-input-inline" style="width:300px;"><input class="layui-input" name="opinion" placeholder="否决必填"></div>
+                            </div>
+                        </th:block>
+                        <th:block th:if="${s == 2}">
+                            <div class="layui-form-item">
+                                <label class="layui-form-label">照录复核结论</label>
+                                <div class="layui-input-inline">
+                                    <select name="enteredPrevResult"><option value="">请选择</option>
+                                        <option value="1">通过</option><option value="2">否决</option></select>
+                                </div>
+                                <label class="layui-form-label">审定结论</label>
+                                <div class="layui-input-inline">
+                                    <select name="stepResult"><option value="">请选择</option>
+                                        <option value="1">通过（归档结案）</option><option value="2">否决（终止）</option></select>
+                                </div>
+                                <label class="layui-form-label">审定意见</label>
+                                <div class="layui-input-inline" style="width:260px;"><input class="layui-input" name="opinion" placeholder="否决必填"></div>
+                            </div>
+                        </th:block>
+                        <div class="layui-form-item">
+                            <div class="layui-input-block">
+                                <button type="button" class="pear-btn pear-btn-primary" th:attr="data-step=${s}" onclick="submitStep(this)">提交本环节</button>
+                                <span style="color:#999;font-size:12px;">本环节该填的填齐才能往下；提交后本环节对其他人只读。</span>
+                            </div>
+                        </div>
+                    </form>
+                </th:block>
+                <div th:if="${order.currentStep == s && order.status == 0 && !stepEditable.get(s)}"
+                     style="margin-top:8px;color:#999;font-size:12px;">本环节不由你填报，系统未对你开通。</div>
+            </div>
+        </th:block>
+    </div>
+</div>
+
+<!-- 供水户盯办流水摘要（逐笔下钻在盯办台账） -->
+<div class="layui-card" th:if="${follow != null}">
+    <div class="layui-card-header" style="font-weight:600;">
+        供水户盯办 <span th:text="${follow.followNo}"></span>
+        <span class="layui-badge layui-bg-blue" th:if="${follow.status == 0}">在盯</span>
+        <span class="layui-badge layui-bg-green" th:if="${follow.status == 1}">已结（系统随归档自结）</span>
+        <a class="layui-btn layui-btn-xs pear-btn-primary" style="margin-left:10px;"
+           th:href="@{/zwFollow/detail(id=${follow.id})}" shiro:hasPermission="zw:zwFollow:view">盯办下钻</a>
+    </div>
+    <div class="layui-card-body">
+        <div style="font-size:13px;color:#555;">
+            供水户：<b th:text="${follow.waterUserName}"></b>；联系人：<b th:text="${follow.contactName}"></b>
+            <span th:text="${follow.contactPhone}"></span>；盯办周期：<b th:text="${follow.periodDays}"></b> 天（另算）；
+            上一次盯办：<b th:text="${follow.lastTouchAt == null ? '—' : #dates.format(follow.lastTouchAt,'yyyy-MM-dd HH:mm:ss')}"></b>；
+            下一次该盯：<b th:text="${follow.nextDueAt == null ? '—' : #dates.format(follow.nextDueAt,'yyyy-MM-dd HH:mm:ss')}"></b>
+        </div>
+        <table style="width:100%;margin-top:8px;">
+            <tr th:each="t : ${touchesDesc}" class="trace-row">
+                <td style="width:60px;" th:text="'第' + ${t.seq} + '笔'"></td>
+                <td style="width:160px;" th:text="${t.status == 1 ? (t.actualTouchAt == null ? '' : #dates.format(t.actualTouchAt,'yyyy-MM-dd HH:mm:ss')) : ('应于 ' + #dates.format(t.dueAt,'yyyy-MM-dd HH:mm:ss') + ' 前')}"></td>
+                <td style="width:110px;">
+                    <span class="layui-badge layui-bg-green" th:if="${t.status == 1 && t.result == 'REACHED'}">已联系上</span>
+                    <span class="layui-badge layui-bg-orange" th:if="${t.status == 1 && t.result == 'NOT_REACHABLE'}">联系不上</span>
+                    <span class="layui-badge" th:if="${t.status == 1 && t.result == 'WRONG_CONTACT'}">联系人有误</span>
+                    <span class="layui-badge layui-bg-gray" th:if="${t.status == 0}">待办·漏办</span>
+                </td>
+                <td style="width:120px;color:#666;" th:text="${t.contactName + ' ' + t.contactPhone}"></td>
+                <td th:text="${t.detail}"></td>
+                <td style="width:150px;color:#999;" th:text="'上一笔 ' + ${t.prevTouchAt == null ? '—' : #dates.format(t.prevTouchAt,'yyyy-MM-dd HH:mm:ss')}"></td>
+            </tr>
+        </table>
+    </div>
+</div>
+
+<th:block th:include="include :: footer"/>
+<script th:inline="javascript">
+    let ORDER_ID = [[${order == null ? null : order.id}]];
+    layui.use(['form', 'jquery', 'layer'], function () {
+        let form = layui.form, $ = layui.jquery, layer = layui.layer;
+        form.render();
+
+        window.submitStep = function (btn) {
+            let step = parseInt(btn.getAttribute('data-step'), 10);
+            let f = $('#step-form-' + step);
+            let data = {orderId: ORDER_ID, stepNo: step};
+            f.find('[name]').each(function () { data[$(this).attr('name')] = $(this).val(); });
+            $.ajax({
+                url: rootPath + '/zwAbn/retestStep', type: 'post', data: data,
+                success: function (res) {
+                    layer.msg(res.msg, {icon: res.code === 200 ? 1 : 2});
+                    if (res.code === 200) { setTimeout(function(){ location.reload(); }, 800); }
+                }
+            });
+        };
+    });
+</script>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('供水户盯办台账')"/>
+</head>
+<body class="pear-container">
+<div class="layui-card">
+    <div class="layui-card-body">
+        <form class="layui-form" action="">
+            <div class="layui-form-item">
+                <label class="layui-form-label">盯办单号</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="followNo" class="layui-input">
+                </div>
+                <label class="layui-form-label">点位编号</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="siteNo" class="layui-input">
+                </div>
+                <label class="layui-form-label">供水户</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="waterUserName" class="layui-input">
+                </div>
+                <label class="layui-form-label">情形</label>
+                <div class="layui-input-inline">
+                    <select name="status" class="layui-input">
+                        <option value="">全部</option>
+                        <option value="0">在盯</option>
+                        <option value="1">已结</option>
+                    </select>
+                </div>
+                <button class="pear-btn pear-btn-md pear-btn-primary" lay-submit lay-filter="follow-query">
+                    <i class="layui-icon layui-icon-search"></i> 查询
+                </button>
+                <button type="reset" class="pear-btn pear-btn-md">
+                    <i class="layui-icon layui-icon-refresh"></i> 重置
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<div class="layui-card">
+    <div class="layui-card-body">
+        <button shiro:hasPermission="zw:zwFollow:run" type="button"
+                class="pear-btn pear-btn-primary pear-btn-md" id="btn-run">
+            <i class="layui-icon layui-icon-refresh-3"></i> 跑一轮（系统按周期开盯办笔）
+        </button>
+        <button shiro:hasPermission="zw:zwFollow:view" type="button"
+                class="pear-btn pear-btn-success pear-btn-md" id="btn-export">
+            <i class="layui-icon layui-icon-download-circle"></i> 导出盯办流水
+        </button>
+        <span style="margin-left:12px;color:#999;font-size:12px;">
+            盯办单由系统随异常上报自开、随归档自结，页面无开/闭口；周期另算，逾期未办的单不开新笔。
+        </span>
+    </div>
+</div>
+<div class="layui-card">
+    <div class="layui-card-body">
+        <table id="follow-table" lay-filter="follow-table"></table>
+    </div>
+</div>
+
+<script type="text/html" id="follow-bar">
+    <a class="layui-btn layui-btn-xs pear-btn-primary" lay-event="detail">盯办流水</a>
+</script>
+<script type="text/html" id="follow-status">
+    {{#  if(d.status == 0){ }}<span class="layui-badge layui-bg-blue">在盯</span>
+    {{#  } else { }}<span class="layui-badge layui-bg-green">已结</span>{{#  } }}
+</script>
+
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['table', 'form', 'jquery', 'layer'], function () {
+        let table = layui.table, form = layui.form, $ = layui.jquery, layer = layui.layer;
+        let MODULE_PATH = rootPath + "/zwFollow/";
+
+        table.render({
+            elem: '#follow-table',
+            url: MODULE_PATH + 'list',
+            page: true, method: 'get', skin: 'line',
+            cols: [[
+                {title: 'ID', field: 'id', hide: true},
+                {title: '盯办单号', field: 'followNo', align: 'center', width: 170},
+                {title: '异常单号', field: 'caseNo', align: 'center', width: 150},
+                {title: '点位', field: 'siteNo', align: 'center', width: 80},
+                {title: '供水户', field: 'waterUserName', align: 'center', width: 160},
+                {title: '当前联系人', field: 'contactName', align: 'center', width: 120},
+                {title: '电话', field: 'contactPhone', align: 'center', width: 120},
+                {title: '周期(天)', field: 'periodDays', align: 'center', width: 90},
+                {title: '上一次盯办', field: 'lastTouchAt', align: 'center', width: 160},
+                {title: '下一次该盯', field: 'nextDueAt', align: 'center', width: 160},
+                {title: '情形', field: 'status', align: 'center', width: 90, templet: '#follow-status'},
+                {title: '操作', toolbar: '#follow-bar', align: 'center', width: 110, fixed: 'right'}
+            ]]
+        });
+
+        form.on('submit(follow-query)', function (data) {
+            table.reload('follow-table', {where: data.field, page: {curr: 1}});
+            return false;
+        });
+
+        $('#btn-run').on('click', function () {
+            $.ajax({
+                url: MODULE_PATH + 'run', type: 'post',
+                success: function (res) { layer.msg(res.msg, {icon: res.code === 200 ? 1 : 2}); if (res.code === 200) table.reload('follow-table'); }
+            });
+        });
+        $('#btn-export').on('click', function () {
+            let f = {};
+            $('.layui-form [name]').each(function () { f[$(this).attr('name')] = $(this).val(); });
+            window.location.href = MODULE_PATH + 'export?' + $.param({siteNo: f.siteNo || '', status: f.status || ''});
+        });
+        table.on('tool(follow-table)', function (obj) {
+            if (obj.event === 'detail') {
+                window.location.href = MODULE_PATH + 'detail?id=' + obj.data.id;
+            }
+        });
+    });
+</script>
+</body>
+</html>

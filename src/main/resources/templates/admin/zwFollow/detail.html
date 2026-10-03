@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('供水户盯办下钻')"/>
+    <style>
+        .kv {margin-right:18px;font-size:13px;color:#666;}
+        .kv b{color:#333;}
+        table.mini {width:100%;border-collapse:collapse;}
+        table.mini th, table.mini td {border:1px solid #eee;padding:7px 9px;font-size:13px;text-align:left;vertical-align:top;}
+        tr.pending td {background:#fff6f5;}
+    </style>
+</head>
+<body class="pear-container">
+
+<div class="layui-card">
+    <div class="layui-card-header" style="font-weight:600;">
+        <span th:text="${follow.followNo}"></span>
+        <span class="layui-badge layui-bg-blue" th:if="${follow.status == 0}">在盯</span>
+        <span class="layui-badge layui-bg-green" th:if="${follow.status == 1}">已结（系统随归档自结）</span>
+        <a class="layui-btn layui-btn-xs pear-btn-primary" style="margin-left:10px;"
+           th:href="@{/zwAbn/detail(id=${follow.caseId})}" shiro:hasPermission="zw:zwAbn:list">回异常单</a>
+    </div>
+    <div class="layui-card-body">
+        <span class="kv">异常单号：<b th:text="${follow.caseNo}"></b></span>
+        <span class="kv">点位：<b th:text="${follow.siteNo}"></b></span>
+        <span class="kv">供水户：<b th:text="${follow.waterUserName}"></b></span>
+        <span class="kv">盯办周期：<b th:text="${follow.periodDays}"></b> 天（另算）</span><br>
+        <span class="kv">上一次实际盯办：<b th:text="${follow.lastTouchAt == null ? '—' : #dates.format(follow.lastTouchAt,'yyyy-MM-dd HH:mm:ss')}"></b></span>
+        <span class="kv">下一次该盯：<b th:text="${follow.nextDueAt == null ? '—' : #dates.format(follow.nextDueAt,'yyyy-MM-dd HH:mm:ss')}"></b></span>
+        <span class="kv">开单：<b th:text="${follow.openTime == null ? '' : #dates.format(follow.openTime,'yyyy-MM-dd HH:mm:ss')}"></b></span>
+        <span class="kv" th:if="${follow.closeTime != null}">结案：<b th:text="${#dates.format(follow.closeTime,'yyyy-MM-dd HH:mm:ss')}"></b></span>
+    </div>
+</div>
+
+<div class="layui-card">
+    <div class="layui-card-header" style="font-weight:600;">逐笔盯办流水（最新在最上；每笔带上一次盯办时刻，只追加不改）</div>
+    <div class="layui-card-body">
+        <table class="mini">
+            <thead>
+            <tr>
+                <th style="width:56px;">笔序</th>
+                <th style="width:150px;">计划盯办</th>
+                <th style="width:150px;">本笔时限</th>
+                <th style="width:160px;">该找谁/电话</th>
+                <th style="width:150px;">实际盯办</th>
+                <th style="width:90px;">结果</th>
+                <th>当天做了什么</th>
+                <th style="width:150px;">上一次盯办</th>
+                <th style="width:110px;">经办</th>
+                <th style="width:120px;">操作</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="t : ${touchesDesc}" th:class="${t.status == 0} ? 'pending' : ''">
+                <td>第 <span th:text="${t.seq}"></span> 笔</td>
+                <td th:text="${#dates.format(t.planAt,'yyyy-MM-dd HH:mm:ss')}"></td>
+                <td>
+                    <span th:text="${#dates.format(t.dueAt,'yyyy-MM-dd HH:mm:ss')}"></span>
+                    <span class="layui-badge layui-bg-gray" th:if="${t.status == 0}">待办</span>
+                </td>
+                <td th:text="${t.contactName} + ' / ' + ${t.contactPhone}"></td>
+                <td th:text="${t.actualTouchAt == null ? '—' : #dates.format(t.actualTouchAt,'yyyy-MM-dd HH:mm:ss')}"></td>
+                <td>
+                    <span class="layui-badge layui-bg-green" th:if="${t.status == 1 && t.result == 'REACHED'}">已联系上</span>
+                    <span class="layui-badge layui-bg-orange" th:if="${t.status == 1 && t.result == 'NOT_REACHABLE'}">联系不上</span>
+                    <span class="layui-badge" th:if="${t.status == 1 && t.result == 'WRONG_CONTACT'}">联系人有误</span>
+                    <span class="layui-badge layui-bg-gray" th:if="${t.status == 0}">漏办</span>
+                </td>
+                <td th:text="${t.detail}"></td>
+                <td th:text="${t.prevTouchAt == null ? '—' : #dates.format(t.prevTouchAt,'yyyy-MM-dd HH:mm:ss')}"></td>
+                <td th:text="${t.fillBy}"></td>
+                <td>
+                    <button th:if="${t.status == 0 && canFill && follow.status == 0}"
+                            type="button" class="pear-btn pear-btn-primary pear-btn-xs"
+                            th:attr="data-id=${t.id}" onclick="openFill(this)">填盯办结果</button>
+                    <span th:if="${t.status == 1}" style="color:#999;font-size:12px;">落名只读</span>
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['form', 'jquery', 'layer'], function () {
+        let form = layui.form, $ = layui.jquery, layer = layui.layer;
+        let TOUCH_ID = null;
+
+        window.openFill = function (btn) {
+            TOUCH_ID = btn.getAttribute('data-id');
+            layer.open({
+                type: 1, title: '填盯办结果（系统开出的笔；落名后只读）', area: ['520px', '420px'],
+                content:
+                    '<form class="layui-form" style="padding:20px 10px 0 0;" id="fill-form">' +
+                    '<div class="layui-form-item"><label class="layui-form-label">盯办结果</label>' +
+                    '<div class="layui-input-block"><select name="result">' +
+                    '<option value="">请选择</option>' +
+                    '<option value="REACHED">已联系上</option>' +
+                    '<option value="NOT_REACHABLE">联系不上</option>' +
+                    '<option value="WRONG_CONTACT">联系人有误</option>' +
+                    '</select></div></div>' +
+                    '<div class="layui-form-item"><label class="layui-form-label">实际盯办时刻</label>' +
+                    '<div class="layui-input-block"><input class="layui-input" name="actualAt" placeholder="yyyy-MM-dd HH:mm:ss"></div></div>' +
+                    '<div class="layui-form-item"><label class="layui-form-label">本次情况</label>' +
+                    '<div class="layui-input-block"><textarea name="detail" placeholder="当天做了什么、对方怎么说" class="layui-textarea"></textarea></div></div>' +
+                    '<div class="layui-form-item"><div class="layui-input-block">' +
+                    '<button class="pear-btn pear-btn-primary" lay-submit lay-filter="fill-submit">提交</button>' +
+                    '</div></div></form>',
+                success: function () {
+                    form.render();
+                    form.on('submit(fill-submit)', function (data) {
+                        data.field.touchId = TOUCH_ID;
+                        $.ajax({
+                            url: rootPath + '/zwFollow/fill', type: 'post', data: data.field,
+                            success: function (res) {
+                                layer.msg(res.msg, {icon: res.code === 200 ? 1 : 2});
+                                if (res.code === 200) { setTimeout(function(){ location.reload(); }, 700); }
+                            }
+                        });
+                        return false;
+                    });
+                }
+            });
+        };
+    });
+</script>
+</body>
+</html>

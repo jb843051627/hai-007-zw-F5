@@ -68,6 +68,8 @@ public class TZwImpRowServiceImpl implements ITZwImpRowService {
     private TZwSourceMapper zwSourceMapper;
     @javax.annotation.Resource
     private ITZwLimRuleService zwLimRuleService;
+    @javax.annotation.Resource
+    private com.fc.v2.service.ITZwAbnCaseService zwAbnCaseService;
 
     @Override
     public TZwImpRow selectTZwImpRowById(Long id) {
@@ -258,6 +260,13 @@ public class TZwImpRowServiceImpl implements ITZwImpRowService {
         result.setBlocked(blocked);
         result.setHardErrors(hardErrors);
         result.setImported(blocked ? 0 : entities.size());
+
+        // 正式账落定后，异常一判出来即自动登记判定台账（只追加，登记服务自带点位+检测日+指标幂等）
+        if (!blocked) {
+            for (TZwImpRow r : entities) {
+                this.zwAbnCaseService.registerFromRow(r);
+            }
+}
         return result;
     }
 
