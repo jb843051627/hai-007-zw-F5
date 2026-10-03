@@ -68,6 +68,8 @@ public class TZwImpRowServiceImpl implements ITZwImpRowService {
     private TZwSourceMapper zwSourceMapper;
     @javax.annotation.Resource
     private ITZwLimRuleService zwLimRuleService;
+    @javax.annotation.Resource
+    private com.fc.v2.service.ITZwAnomalyService zwAnomalyService;
 
     @Override
     public TZwImpRow selectTZwImpRowById(Long id) {
@@ -258,6 +260,9 @@ public class TZwImpRowServiceImpl implements ITZwImpRowService {
         result.setBlocked(blocked);
         result.setHardErrors(hardErrors);
         result.setImported(blocked ? 0 : entities.size());
+
+        // 异常判定自动登记与导入同事务：整批拦在库外（无正式账行）则一笔不登记
+        this.zwAnomalyService.syncOnImport(batchNo);
         return result;
     }
 
